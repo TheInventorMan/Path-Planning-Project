@@ -8,60 +8,15 @@
 #include "helpers.h"
 #include "json.hpp"
 #include "spline.h"
-#include "Dense"
 
 // for convenience
 using nlohmann::json;
 using std::string;
 using std::vector;
+using std::cout;
+using std::endl;
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
-
-
-//review
-vector<double> JMT(vector<double> &start, vector<double> &end, double T) {
-  /**
-   * Calculate the Jerk Minimizing Trajectory that connects the initial state
-   * to the final state in time T.
-   *
-   * @param start - the vehicles start location given as a length three array
-   *   corresponding to initial values of [s, s_dot, s_double_dot]
-   * @param end - the desired end state for vehicle. Like "start" this is a
-   *   length three array.
-   * @param T - The duration, in seconds, over which this maneuver should occur.
-   *
-   * @output an array of length 6, each value corresponding to a coefficent in
-   *   the polynomial:
-   *   s(t) = a_0 + a_1 * t + a_2 * t**2 + a_3 * t**3 + a_4 * t**4 + a_5 * t**5
-   *
-   * EXAMPLE
-   *   > JMT([0, 10, 0], [10, 10, 0], 1)
-   *     [0.0, 10.0, 0.0, 0.0, 0.0, 0.0]
-   */
-  MatrixXd A = MatrixXd(3, 3);
-  A << T*T*T, T*T*T*T, T*T*T*T*T,
-       3*T*T, 4*T*T*T,5*T*T*T*T,
-       6*T, 12*T*T, 20*T*T*T;
-
-  MatrixXd B = MatrixXd(3,1);
-  B << end[0]-(start[0]+start[1]*T+.5*start[2]*T*T),
-       end[1]-(start[1]+start[2]*T),
-       end[2]-start[2];
-
-  MatrixXd Ai = A.inverse();
-
-  MatrixXd C = Ai*B;
-
-  vector <double> result = {start[0], start[1], .5*start[2]};
-
-  for(int i = 0; i < C.size(); ++i) {
-    result.push_back(C.data()[i]);
-  }
-
-  return result;
-}
-
-
 
 int main() {
   uWS::Hub h;
@@ -106,7 +61,8 @@ int main() {
   }
 
   h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
-               &map_waypoints_dx,&map_waypoints_dy]
+               &map_waypoints_dx,&map_waypoints_dy, &behavior_sm,
+               &curr_lane, &target_speed, &spd_setpoint]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -156,33 +112,71 @@ int main() {
           }
 
           bool following_active = false;
+          behavior_sm = 0;
+          bool left_clear = true;
+          bool right_clear = true;
+          double tgt_follow_speed = target_speed;
+          float d;
+          double vx, vy, front_car_s, nearby_s;
+          front_car_s = car_s + 50;
 
-          for(int i = 0; i : sensor_fusion.size(); i++){
-            float d = sensor_fusion[i][6];
-            if(d < (2+4*curr_lane+2) && d > (2+4*lane-2)){
-              double vx = sensor_fusion[i][3];
-              double vy = sensor_fusion[i][4];
-              double tgt_follow_speed = sqrt(vx*vx + vy*vy);
-              double front_car_s = sensor_fusion[i][5];
+          for(int i = 0; i < sensor_fusion.size(); i++){
+            d = sensor_fusion[i][6];
+            nearby_s = sensor_fusion[i][5];
+            if(d < (2+4*curr_lane+2) && d > (2+4*curr_lane-2)){
+              vx = sensor_fusion[i][3];
+              vy = sensor_fusion[i][4];
+              tgt_follow_speed = sqrt(vx*vx + vy*vy);
+              front_car_s = nearby_s;
 
               front_car_s += ((double)prev_path_size * 0.02 * tgt_follow_speed);
               if ((front_car_s > car_s) && (front_car_s-car_s < 30)){
                 //spd_setpoint = tgt_follow_speed; //need to add PID control
                 following_active = true;
-
+                behavior_sm = 1;
                 //check if there are cars on side, change curr_lane if not
-
+                // if(curr_lane > 0){
+                //   curr_lane -= 1;
+                // }
               }
+
+            } else if(d < (2 + 4*(curr_lane-1) + 2) && d > (2 + 4*(curr_lane-1) - 2) && curr_lane > 0 && nearby_s < front_car_s && nearby_s > car_s - 4) {
+              left_clear = false;
+            } else if(d < (2 + 4*(curr_lane+1) + 2) && d > (2 + 4*(curr_lane+1) - 2) && curr_lane < 2 && nearby_s < front_car_s && nearby_s > car_s - 4) {
+              right_clear = false; //compute costs: keep in lane, lane left, lane right
             }
+
           }
 
+          if(curr_lane == 0){
+            left_clear = false;
+          } else if (curr_lane == 2){
+            right_clear = false;
+          }
+		  //cout << "check1" << endl;
+          double increment;
           if(following_active){
-            spd_setpoint += 0.224*(tgt_follow_speed - spd_setpoint); //P controller
+            increment = 0.025*(tgt_follow_speed - spd_setpoint); //P controller
           } else {
-            spd_setpoint += 0.224*(target_speed - spd_setpoint); //resume cruise
+            increment = 0.025*(target_speed - spd_setpoint); //resume cruise
           } //todo: consider distance error as well
 
+          if(increment < 0.224){
+            spd_setpoint += increment;
+          } else {
+            spd_setpoint += 0.224;
+          }
 
+          if(behavior_sm == 1){
+            behavior_sm = 2;
+
+            if (left_clear){
+              curr_lane -= 1;
+            } else if (right_clear){
+              curr_lane += 1;
+            }
+            
+          }
 
           //smooth lane keep
           vector<double> ptsx;
@@ -204,8 +198,8 @@ int main() {
 
           } else {
 
-            ref_x = previous_path_x[prev_path_size-2];
-            ref_y = previous_path_y[prev_path_size-2];
+            ref_x = previous_path_x[prev_path_size-1];
+            ref_y = previous_path_y[prev_path_size-1];
 
             double ref_x_prev = previous_path_x[prev_path_size-2];
             double ref_y_prev = previous_path_y[prev_path_size-2];
@@ -218,7 +212,7 @@ int main() {
             ptsy.push_back(ref_y);
 
           }
-
+		  //cout << "check2" << endl;
           vector<double> next_wp0 = getXY(car_s+30, 2+4*curr_lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> next_wp1 = getXY(car_s+60, 2+4*curr_lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> next_wp2 = getXY(car_s+90, 2+4*curr_lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -238,10 +232,11 @@ int main() {
             ptsx[i] = (shift_x*cos(0-ref_yaw)-shift_y*sin(0-ref_yaw));
             ptsy[i] = (shift_x*sin(0-ref_yaw)+shift_y*cos(0-ref_yaw));
           }
-
+		  //cout << "check3" << endl;
           tk::spline s;
 
           s.set_points(ptsx, ptsy);
+		  //cout << "check4" << endl;
 
           for(int i = 0; i < previous_path_x.size(); i++){
             next_x_vals.push_back(previous_path_x[i]);
@@ -253,7 +248,7 @@ int main() {
           double target_dist = sqrt((target_x*target_x)+(target_y*target_y));
 
           double x_add_on = 0;
-
+		  //cout << "check5" << endl;
           for(int i = 0; i <= 50-previous_path_x.size(); i++){
             double N = (target_dist/(0.02*spd_setpoint/2.24));
             double x_point = x_add_on+target_x/N;
