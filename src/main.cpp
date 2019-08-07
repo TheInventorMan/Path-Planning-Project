@@ -94,7 +94,21 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
+          /** Implementation notes:
+          given car's localization data (s,d,speed)
+          given nearby cars info (id,speed,s,d)
 
+          filter nearby cars to only lookahead to 50 meters (?)
+
+          find nearest cars
+
+          built in loop that always maintains speed of car directly in front
+
+          check if current speed == desired. if not, prepare lane change:
+          check left and right lanes for nearby cars <= s val of front car and > current_s - 4.
+          if none on either side, move to that lane.
+          else, wait in lane 
+          */
 
 
           /**
