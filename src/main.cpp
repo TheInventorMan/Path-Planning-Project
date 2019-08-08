@@ -28,11 +28,11 @@ int main() {
         vector<double> map_waypoints_dx;
         vector<double> map_waypoints_dy;
 
-        int behavior_sm = 0; //state machine: 0: cruise, 1: follow/prepare lane change, 2: LC
-        int curr_lane = 1; //current lane, initialize in lane 1
-        int target_lane = 1;
-        double target_speed = 49.0;
-        double spd_setpoint = 0.0; //desired velocity
+        int behavior_sm = 0;         // State machine variable: 0: cruise, 1: follow/prepare lane change, 2: LC
+        int curr_lane = 1;           // Current lane, initialize in lane 1
+        int target_lane = 1;         // Target lane to follow
+        double target_speed = 49.0;  // Target speed during cruise
+        double spd_setpoint = 0.0;   // Setpoint for throttle controller to follow
 
         // Waypoint map to read from
         string map_file_ = "../data/highway_map.csv";
@@ -99,20 +99,16 @@ int main() {
                                         double end_path_d = j[1]["end_path_d"];
 
                                         // Sensor Fusion Data, a list of all other cars on the same side
-                                        //   of the road.
+                                        // of the road.
                                         auto sensor_fusion = j[1]["sensor_fusion"];
 
                                         json msgJson;
 
+                                        // Trajectory points to follow
                                         vector<double> next_x_vals;
                                         vector<double> next_y_vals;
-                                        //cout << sensor_fusion << endl;
-                                        //follow vehicle ahead
-                                        if(prev_path_size > 0) {
-                                                car_s = end_path_s;
-                                        }
 
-                                        //get current lane
+                                        // Get current lane from current d coordinates
                                         if (car_d > 0 && car_d < 4) {
                                                 curr_lane = 0;
                                         } else if (car_d > 4 && car_d < 8) {
@@ -121,18 +117,19 @@ int main() {
                                                 curr_lane = 2;
                                         }
 
-                                        behavior_sm = 0; //state machine
-                                        bool following_active = false; //currently following vehicle ahead
+                                        behavior_sm = 0; // Reset state machine to cruise mode
+                                        bool following_active = false; // Not currently following a vehicle ahead
 
-                                        double tgt_follow_speed = target_speed; //target following speed
-                                        double front_car_s = 35; //position of followed car
-                                        double lowest_s = 10000; // nearest car in same lane, s position
-                                        int front_nearest = -1; //index of nearest car in same lane
+                                        double tgt_follow_speed = target_speed; // Target following speed
+                                        double front_car_s = 35; // Position of followed car
+                                        double lowest_s = 10000; // S position of the nearest car in same lane
+                                        int front_nearest = -1; // Index of nearest car in same lane
 
-                                        for(int i = 0; i < sensor_fusion.size(); i++) { //find nearest car ahead
+                                        // Find nearest car in the same lane
+                                        for(int i = 0; i < sensor_fusion.size(); i++) {
                                                 double front_d = sensor_fusion[i][6];
-                                                double front_s = (double)sensor_fusion[i][5] - car_s + 5;
-                                                //cout << front_s << endl;
+                                                double front_s = (double)sensor_fusion[i][5] - car_s;
+
                                                 if(front_d > (4*curr_lane) && front_d < (4+4*curr_lane)) {
                                                         if ((front_s < lowest_s) && (front_s > 0)) {
                                                                 front_nearest = i;
@@ -141,24 +138,25 @@ int main() {
                                                 }
                                         }
 
+                                        // Sanity check, change state machine, begin following if slower than ego vehicle
                                         if(front_nearest > -1) {
                                                 double vx = sensor_fusion[front_nearest][3];
                                                 double vy = sensor_fusion[front_nearest][4];
                                                 tgt_follow_speed = sqrt(vx*vx + vy*vy);
 
                                                 front_car_s = lowest_s;
-                                                //front_car_s += ((double)prev_path_size * 0.02 * tgt_follow_speed);
-                                                //cout << "check1" << endl;
                                                 if (front_car_s < 30) {
                                                         following_active = true;
                                                         behavior_sm = 1;
-                                                        //cout << "check2" << endl;
-                                                } else if (front_car_s > 35) {
+                                                }
+                                                else if (front_car_s > 35)
+                                                {
                                                         following_active = false;
                                                         behavior_sm = 0;
                                                 }
                                         }
 
+                                        // Compute costs of lane changes
                                         double keep_cost, left_cost, right_cost;
                                         double nearest_left_s = 1000;
                                         double nearest_right_s = 1000;
@@ -170,80 +168,66 @@ int main() {
 
                                         double dummy_left_cost = 0.01;
                                         double dummy_right_cost = 0.01;
-                                        //cout << "current_s " << car_s << endl;
-                                        //if (behavior_sm == 1) { //in PLC mode, loop through sensor fusion data to find costs of lane changes
-                                        //cout << curr_lane << endl;
 
                                         for (int i = 0; i < sensor_fusion.size(); i++) {
                                                 side_d = sensor_fusion[i][6];
-                                                side_s = (double)sensor_fusion[i][5] - car_s + 15; //some weird offset (???)
+                                                side_s = (double)sensor_fusion[i][5] - car_s;
+
                                                 double side_vx = sensor_fusion[i][3];
                                                 double side_vy = sensor_fusion[i][4];
-                                                double rel_spd = sqrt(side_vx*side_vx + side_vy*side_vy) - car_speed;
+                                                double rel_spd = sqrt(side_vx*side_vx + side_vy*side_vy) - car_speed; // Relative speed
 
                                                 if ((side_d < (4 + 4*(curr_lane-1))) && (side_d > (4*(curr_lane-1)))) {
-                                                        //car is on left
+                                                        // Car on the left
                                                         if (side_s < nearest_left_s) { //unused for now
                                                                 nearest_left_s = side_s;
                                                                 nearest_left = i;
                                                         }
-                                                        if (side_s < front_car_s && side_s > -10) { //count cars in the way of changing lanes
-                                                                num_left += 1;
-                                                                //cout << "car on left " << side_s << endl;
+                                                        if (side_s < front_car_s && side_s > -10) {
+                                                                num_left += 1; // Count cars potentially in the way of changing lanes
 
+                                                                if (side_s < 6 && side_s > -6) { // Completely impermissible
+                                                                        dummy_left_cost += 1000;
+                                                                }
 
-                                                                if (side_s < 6 && side_s > -6) {
-                                                                        dummy_left_cost += 100;
-                                                                }
-                                                                if (side_s < 0) {
-                                                                        rel_spd *= -1;
-                                                                }
-                                                                dummy_left_cost += 100/fabs(side_s); //- 0.25*rel_spd;
-                                                                //compute some cost variable value here
+                                                                dummy_left_cost += 100/fabs(side_s);
                                                         }
                                                 }
 
                                                 if ((side_d < (4 + 4*(curr_lane+1))) && (side_d > (4*(curr_lane+1)))) {
-                                                        //car is on right
+                                                        // Car on the right
                                                         if (side_s < nearest_right_s) {
                                                                 nearest_right_s = side_s;
                                                                 nearest_right = i;
                                                         }
-                                                        if (side_s < front_car_s && side_s > -10) { //count cars in the way of changing lanes
-                                                                num_right += 1;
-                                                                //cout << "car on right " << side_s << endl;
-                                                                //todo: consider *approaching* vehicles (increase lookback, consider velocity)
-
+                                                        if (side_s < front_car_s && side_s > -10) {
+                                                                num_right += 1; // Count cars potentially in the way of changing lanes
 
                                                                 if (side_s < 6 && side_s > -6) {
-                                                                        dummy_right_cost += 100;
+                                                                        dummy_right_cost += 1000;
                                                                 }
-                                                                //compute some cost variable here
-                                                                if (side_s < 0) {
-                                                                        rel_spd *= -1;
-                                                                }
-                                                                dummy_right_cost += 100/fabs(side_s); //- 0.25*rel_spd;
+                                                                dummy_right_cost += 100/fabs(side_s);
                                                         }
                                                 }
 
                                         }
 
-                                        //now compute costs
                                         if(following_active) {
+                                                 // Cost to remain in lane is proportional to current following speed
                                                 keep_cost = 1-(tgt_follow_speed/target_speed);
                                         } else {
+                                                // Cost is zero if no vehicle ahead
                                                 keep_cost = 0.0;
                                         }
 
-                                        left_cost = 1 - exp(-dummy_left_cost);//2*num_left + 0.01;
-                                        right_cost = 1 - exp(-dummy_right_cost);//2*num_right + 0.01; //todo
+                                        left_cost = 1 - exp(-dummy_left_cost);
+                                        right_cost = 1 - exp(-dummy_right_cost);
 
                                         if(curr_lane == 0) {
                                                 left_cost = 1;
                                         } else if (curr_lane == 2) {
                                                 right_cost = 1;
                                         }
-                                        //}
 
                                         cout << "keep " << keep_cost << endl;
                                         cout << "left " << left_cost << endl;
@@ -285,6 +269,11 @@ int main() {
                                                 spd_setpoint += 0.224;
                                         } else {
                                                 spd_setpoint -= 0.224;
+                                        }
+
+                                        // Compute next path from end of previous path
+                                        if(prev_path_size > 0) {
+                                                car_s = end_path_s;
                                         }
 
                                         //smooth lane
@@ -375,36 +364,6 @@ int main() {
                                                 next_x_vals.push_back(x_point);
                                                 next_y_vals.push_back(y_point);
                                         }
-
-                                        /** Implementation notes:
-                                           given car's localization data (s,d,speed)
-                                           given nearby cars info (id,speed,s,d)
-
-                                           //state machine: 0: cruise, 1: follow/prepare lane change, 2: LC
-
-                                           /*
-
-                                           //cruise: just follow lane, at each timestep, create trajectories to
-                                           30 meters ahead (lookahead dist)
-
-                                           //FPLC: if car less than lookahead, use PID control to maintain car_speed
-                                           also look for nearby cars < s_front, > s_ego - 7
-
-                                           //LC: shift lanes into opening, go back to state 0
-
-
-                                           filter nearby cars to only lookahead to 30 meters (?)
-
-                                           find nearest cars
-
-                                           built in loop that always maintains speed of car directly in front
-
-                                           check if current speed == desired. if not, prepare lane change:
-                                           check left and right lanes for nearby cars <= s val of front car and > current_s - 4.
-                                           if none on either side, move to that lane.
-                                           else, wait in lane
-                                         */
-
 
                                         msgJson["next_x"] = next_x_vals;
                                         msgJson["next_y"] = next_y_vals;
