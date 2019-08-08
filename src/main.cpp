@@ -108,6 +108,7 @@ int main() {
                                         vector<double> next_x_vals;
                                         vector<double> next_y_vals;
 
+                                        //*********************** BEHAVIOR/DECISION MODULE **************************
                                         // Get current lane from current d coordinates
                                         if (car_d > 0 && car_d < 4) {
                                                 curr_lane = 0;
@@ -230,11 +231,13 @@ int main() {
                                         } else if (curr_lane == 2) {
                                                 right_cost = 1;
                                         }
+                                        //*********************** END BEHAVIOR/DECISION MODULE **************************
 
                                         //cout << "keep " << keep_cost << endl;
                                         //cout << "left " << left_cost << endl;
                                         //cout << "right " << right_cost << endl;
 
+                                        //*********************** MOTION CONTROL MODULE *********************************
                                         // If commanded lane is not current localized lane, lane change is still in progress
                                         if (target_lane != curr_lane) {
                                                 behavior_sm = 2;
@@ -274,7 +277,9 @@ int main() {
                                         } else {
                                                 spd_setpoint -= 0.224;
                                         }
+                                        //*********************** END MOTION CONTROL MODULE *****************************
 
+                                        //*********************** TRAJECTORY GENERATION MODULE **************************
                                         // Compute next path from end of previous path
                                         if(prev_path_size > 0) {
                                                 car_s = end_path_s;
@@ -375,6 +380,7 @@ int main() {
                                                 next_x_vals.push_back(x_point);
                                                 next_y_vals.push_back(y_point);
                                         }
+                                        //*********************** END TRAJECTORY GENERATION MODULE **************************
 
                                         msgJson["next_x"] = next_x_vals;
                                         msgJson["next_y"] = next_y_vals;
