@@ -190,7 +190,7 @@ int main() {
                                                                         dummy_left_cost += 1000;
                                                                 }
 
-                                                                dummy_left_cost += 100/fabs(side_s);
+                                                                dummy_left_cost += 100/fabs(side_s); // Cost increases as car is closer to ego
                                                         }
                                                 }
 
@@ -220,31 +220,34 @@ int main() {
                                                 keep_cost = 0.0;
                                         }
 
+                                        // Compute costs bounded between 0 and 1
                                         left_cost = 1 - exp(-dummy_left_cost);
                                         right_cost = 1 - exp(-dummy_right_cost);
 
+                                        // Cases for lanes on either side
                                         if(curr_lane == 0) {
                                                 left_cost = 1;
                                         } else if (curr_lane == 2) {
                                                 right_cost = 1;
                                         }
 
-                                        cout << "keep " << keep_cost << endl;
-                                        cout << "left " << left_cost << endl;
-                                        cout << "right " << right_cost << endl;
+                                        //cout << "keep " << keep_cost << endl;
+                                        //cout << "left " << left_cost << endl;
+                                        //cout << "right " << right_cost << endl;
 
+                                        // If commanded lane is not current localized lane, lane change is still in progress
                                         if (target_lane != curr_lane) {
                                                 behavior_sm = 2;
                                         }
 
-                                        if(behavior_sm == 1) {
+                                        if(behavior_sm == 1) { // Only change lane if in Prepare Lane Change mode
                                                 if (left_cost < keep_cost && left_cost < right_cost) {
                                                         target_lane -= 1;
                                                         behavior_sm = 2;
                                                 } else if (right_cost < keep_cost && right_cost < left_cost) {
                                                         target_lane += 1;
                                                         behavior_sm = 2;
-                                                } else if (keep_cost > left_cost && keep_cost > right_cost) { //break symmetry
+                                                } else if (keep_cost > left_cost && keep_cost > right_cost) { // Break symmetry
                                                         if (curr_lane < 2) {
                                                                 target_lane += 1;
                                                                 behavior_sm = 2;
@@ -258,11 +261,12 @@ int main() {
                                         double increment;
 
                                         if(following_active) {
-                                                increment = 0.035*(tgt_follow_speed - car_speed); //P controller
+                                                increment = 0.035*(tgt_follow_speed - car_speed); // P controller for speed
                                         } else {
-                                                increment = 0.035*(target_speed - car_speed); //resume cruise
+                                                increment = 0.035*(target_speed - car_speed); // Resume cruise when there is no car ahead
                                         }
 
+                                        // Bound acceleration
                                         if(fabs(increment) < 0.224) {
                                                 spd_setpoint += increment;
                                         } else if(increment > 0) {
@@ -276,7 +280,7 @@ int main() {
                                                 car_s = end_path_s;
                                         }
 
-                                        //smooth lane
+                                        // Compute coarse trajectory
                                         vector<double> ptsx;
                                         vector<double> ptsy;
 
@@ -284,6 +288,7 @@ int main() {
                                         double ref_y = car_y;
                                         double ref_yaw = deg2rad(car_yaw);
 
+                                        // Just use current position when starting out
                                         if (prev_path_size < 2) {
                                                 double prev_car_x = car_x - cos(car_yaw);
                                                 double prev_car_y = car_y - sin(car_yaw);
@@ -295,7 +300,7 @@ int main() {
                                                 ptsy.push_back(car_y);
 
                                         } else {
-
+                                                // Push back last points of previous trajectory for continuity
                                                 ref_x = previous_path_x[prev_path_size-1];
                                                 ref_y = previous_path_y[prev_path_size-1];
 
@@ -311,10 +316,12 @@ int main() {
 
                                         }
 
+                                        // Get x,y coords of three lookahead waypoints at 30,60,90 meters ahead of car
                                         vector<double> next_wp0 = getXY(car_s+30, 2+4*target_lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
                                         vector<double> next_wp1 = getXY(car_s+60, 2+4*target_lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
                                         vector<double> next_wp2 = getXY(car_s+90, 2+4*target_lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
+                                        // Add points to coarse trajectory
                                         ptsx.push_back(next_wp0[0]);
                                         ptsx.push_back(next_wp1[0]);
                                         ptsx.push_back(next_wp2[0]);
@@ -323,6 +330,7 @@ int main() {
                                         ptsy.push_back(next_wp1[1]);
                                         ptsy.push_back(next_wp2[1]);
 
+                                        // Rotate points 90 degrees to prevent vertical functions from being computed
                                         for(int i=0; i < ptsx.size(); i++) {
                                                 double shift_x = ptsx[i]-ref_x;
                                                 double shift_y = ptsy[i]-ref_y;
@@ -331,20 +339,23 @@ int main() {
                                                 ptsy[i] = (shift_x*sin(0-ref_yaw)+shift_y*cos(0-ref_yaw));
                                         }
 
+                                        // Define spline using coarse trajectory
                                         tk::spline s;
                                         s.set_points(ptsx, ptsy);
 
+                                        // Add remaining trajectory points on previous path to current trajectory for continuity
                                         for(int i = 0; i < previous_path_x.size(); i++) {
                                                 next_x_vals.push_back(previous_path_x[i]);
                                                 next_y_vals.push_back(previous_path_y[i]);
                                         }
 
+                                        // Compute point spacing for smooth trajectory
                                         double target_x = 30.0;
                                         double target_y = s(target_x);
                                         double target_dist = sqrt((target_x*target_x)+(target_y*target_y));
-
                                         double x_add_on = 0;
 
+                                        // Add smooth trajectory points onto current trajectory buffer
                                         for(int i = 0; i <= 50-previous_path_x.size(); i++) {
                                                 double N = (target_dist/(0.02*spd_setpoint/2.24));
                                                 double x_point = x_add_on+target_x/N;
