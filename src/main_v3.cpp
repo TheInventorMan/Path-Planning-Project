@@ -31,7 +31,7 @@ int main() {
         int behavior_sm = 0; //state machine: 0: cruise, 1: follow/prepare lane change, 2: LC
         int curr_lane = 1; //current lane, initialize in lane 1
         int target_lane = 1;
-        double target_speed = 49.0;
+        double target_speed = 49.5;
         double spd_setpoint = 0.0; //desired velocity
 
         // Waypoint map to read from
@@ -131,7 +131,7 @@ int main() {
 
                                         for(int i = 0; i < sensor_fusion.size(); i++) { //find nearest car ahead
                                                 double front_d = sensor_fusion[i][6];
-                                                double front_s = (double)sensor_fusion[i][5] - car_s + 5;
+                                                double front_s = (double)sensor_fusion[i][5] - car_s + 15;
                                                 //cout << front_s << endl;
                                                 if(front_d > (4*curr_lane) && front_d < (4+4*curr_lane)) {
                                                         if ((front_s < lowest_s) && (front_s > 0)) {
@@ -172,14 +172,14 @@ int main() {
                                         double dummy_right_cost = 0.01;
                                         //cout << "current_s " << car_s << endl;
                                         //if (behavior_sm == 1) { //in PLC mode, loop through sensor fusion data to find costs of lane changes
-                                        //cout << curr_lane << endl;
+                                        cout << curr_lane << endl;
 
                                         for (int i = 0; i < sensor_fusion.size(); i++) {
                                                 side_d = sensor_fusion[i][6];
                                                 side_s = (double)sensor_fusion[i][5] - car_s + 15; //some weird offset (???)
                                                 double side_vx = sensor_fusion[i][3];
                                                 double side_vy = sensor_fusion[i][4];
-                                                double rel_spd = sqrt(side_vx*side_vx + side_vy*side_vy) - car_speed;
+                                                double rel_spd = sqrt(side_vx*side_vx + side_vy*vside_y) - car_speed;
 
                                                 if ((side_d < (4 + 4*(curr_lane-1))) && (side_d > (4*(curr_lane-1)))) {
                                                         //car is on left
@@ -187,20 +187,16 @@ int main() {
                                                                 nearest_left_s = side_s;
                                                                 nearest_left = i;
                                                         }
-                                                        if (side_s < front_car_s && side_s > -10) { //count cars in the way of changing lanes
+                                                        if (side_s < front_car_s && side_s > -8) { //count cars in the way of changing lanes
                                                                 num_left += 1;
-                                                                //cout << "car on left " << side_s << endl;
-
-
-                                                                if (side_s < 6 && side_s > -6) {
-                                                                        dummy_left_cost += 100;
-                                                                }
-                                                                if (side_s < 0) {
-                                                                        rel_spd *= -1;
-                                                                }
-                                                                dummy_left_cost += 100/fabs(side_s); //- 0.25*rel_spd;
-                                                                //compute some cost variable value here
+                                                                cout << "car on left " << side_s << endl;
                                                         }
+                                                        if (side_s < 0){
+                                                          rel_spd *= -1;
+                                                        }
+                                                        dummy_left_cost += 1/fabs(side_s) - rel_spd;
+                                                        //compute some cost variable value here
+
                                                 }
 
                                                 if ((side_d < (4 + 4*(curr_lane+1))) && (side_d > (4*(curr_lane+1)))) {
@@ -209,21 +205,15 @@ int main() {
                                                                 nearest_right_s = side_s;
                                                                 nearest_right = i;
                                                         }
-                                                        if (side_s < front_car_s && side_s > -10) { //count cars in the way of changing lanes
+                                                        if (side_s < front_car_s && side_s > -8) { //count cars in the way of changing lanes
                                                                 num_right += 1;
-                                                                //cout << "car on right " << side_s << endl;
-                                                                //todo: consider *approaching* vehicles (increase lookback, consider velocity)
-
-
-                                                                if (side_s < 6 && side_s > -6) {
-                                                                        dummy_right_cost += 100;
-                                                                }
-                                                                //compute some cost variable here
-                                                                if (side_s < 0) {
-                                                                        rel_spd *= -1;
-                                                                }
-                                                                dummy_right_cost += 100/fabs(side_s); //- 0.25*rel_spd;
+                                                                cout << "car on right " << side_s << endl;
+                                                        } //todo: consider *approaching* vehicles (increase lookback, consider velocity)
+                                                        //compute some cost variable here
+                                                        if (side_s < 0){
+                                                          rel_spd *= -1;
                                                         }
+                                                        dummy_right_cost += 1/fabs(side_s) - rel_spd;
                                                 }
 
                                         }
@@ -235,8 +225,8 @@ int main() {
                                                 keep_cost = 0.0;
                                         }
 
-                                        left_cost = 1 - exp(-dummy_left_cost);//2*num_left + 0.01;
-                                        right_cost = 1 - exp(-dummy_right_cost);//2*num_right + 0.01; //todo
+                                        left_cost = 1 - exp(-dummy_left_cost)//2*num_left + 0.01;
+                                        right_cost = 1 - exp(-dummy_right_cost)//2*num_right + 0.01; //todo
 
                                         if(curr_lane == 0) {
                                                 left_cost = 1;
@@ -245,9 +235,9 @@ int main() {
                                         }
                                         //}
 
-                                        cout << "keep " << keep_cost << endl;
-                                        cout << "left " << left_cost << endl;
-                                        cout << "right " << right_cost << endl;
+                                        //cout << "keep " << keep_cost << endl;
+                                        //cout << "left " << left_cost << endl;
+                                        //cout << "right " << right_cost << endl;
 
                                         if (target_lane != curr_lane) {
                                                 behavior_sm = 2;
@@ -260,23 +250,15 @@ int main() {
                                                 } else if (right_cost < keep_cost && right_cost < left_cost) {
                                                         target_lane += 1;
                                                         behavior_sm = 2;
-                                                } else if (keep_cost > left_cost && keep_cost > right_cost) { //break symmetry
-                                                        if (curr_lane < 2) {
-                                                                target_lane += 1;
-                                                                behavior_sm = 2;
-                                                        } else {
-                                                                target_lane -= 1;
-                                                                behavior_sm = 2;
-                                                        }
                                                 }
                                         }
 
                                         double increment;
 
                                         if(following_active) {
-                                                increment = 0.035*(tgt_follow_speed - car_speed); //P controller
+                                                increment = 0.010*(tgt_follow_speed - car_speed); //P controller
                                         } else {
-                                                increment = 0.035*(target_speed - car_speed); //resume cruise
+                                                increment = 0.025*(target_speed - car_speed); //resume cruise
                                         }
 
                                         if(fabs(increment) < 0.224) {
